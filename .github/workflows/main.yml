@@ -1,0 +1,834 @@
+node_modules
+dist
+.env
+.env.local
+
+<!doctype html>
+<html lang="da">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lovgivning Vendespil</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+
+{
+  "name": "lovgivning-vendespil",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port=3000",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "vite": "^5.0.0"
+  }
+}
+
+# Lovgivning Vendespil
+
+Et dansk lovgivnings-læringsspil med fill-in-the-blank spørgsmål genereret dynamisk af Claude AI.
+
+## Opsætning
+
+### 1. Installer afhængigheder
+
+```bash
+npm install
+```
+
+### 2. Opret API nøgle fil
+
+Kopier `.env.example` til `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Åbn `.env` og indsæt din Anthropic API nøgle:
+
+```
+VITE_ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Du kan oprette en API nøgle på: https://console.anthropic.com/
+
+### 3. Start udviklingsserveren
+
+```bash
+npm run dev
+```
+
+Åbn [http://localhost:3000](http://localhost:3000) i din browser.
+
+## Funktioner
+
+- 4 emner: Vagtloven, Grundloven, Straffeloven, Forvaltningsloven
+- 3 sværhedsgrader: Let, Mellem, Svær
+- Claude AI genererer 5 unikke spørgsmål per spil
+- Fuzzy matching — tolererer små stavefejl
+- Hint-system og forklaringer efter hvert svar
+- Pointsystem med stigende point per sværhedsgrad
+
+## Bygning til produktion
+
+```bash
+npm run build
+```
+
+Output placeres i `dist/` mappen.
+
+## Bemærk
+
+API-nøglen bruges direkte fra browseren. Til produktion anbefales det at sætte en backend proxy op så nøglen ikke eksponeres.
+
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+})
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #0f172a;
+  color: #f1f5f9;
+  min-height: 100vh;
+}
+
+input, button {
+  font-family: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+import { useState, useEffect, useRef } from 'react'
+import { generateQuestion } from './api'
+import { isCorrectAnswer } from './utils'
+import styles from './App.module.css'
+
+const TOPICS = [
+  { id: 'vagtloven', label: 'Vagtloven' },
+  { id: 'grundloven', label: 'Grundloven' },
+  { id: 'straffeloven', label: 'Straffeloven' },
+  { id: 'retsplejeloven', label: 'Retsplejeloven' },
+]
+
+const DIFFICULTIES = [
+  { id: 'let', label: 'Let', points: 10 },
+  { id: 'mellem', label: 'Mellem', points: 20 },
+  { id: 'svær', label: 'Svær', points: 30 },
+]
+
+const TOTAL = 5
+
+export default function App() {
+  const [screen, setScreen] = useState('setup') // setup | game | result
+  const [topic, setTopic] = useState('vagtloven')
+  const [difficulty, setDifficulty] = useState('let')
+
+  const [question, setQuestion] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [answered, setAnswered] = useState(false)
+  const [answerState, setAnswerState] = useState(null) // 'correct' | 'wrong'
+  const [showHint, setShowHint] = useState(false)
+
+  const [currentQ, setCurrentQ] = useState(0)
+  const [correct, setCorrect] = useState(0)
+  const [wrong, setWrong] = useState(0)
+  const [points, setPoints] = useState(0)
+
+  const inputRef = useRef(null)
+
+  async function loadQuestion(qNum) {
+    setLoading(true)
+    setError(null)
+    setQuestion(null)
+    setAnswered(false)
+    setAnswerState(null)
+    setShowHint(false)
+    try {
+      const q = await generateQuestion(topic, difficulty, qNum + 1, TOTAL)
+      setQuestion(q)
+      setTimeout(() => inputRef.current?.focus(), 50)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function startGame() {
+    setCurrentQ(0)
+    setCorrect(0)
+    setWrong(0)
+    setPoints(0)
+    setScreen('game')
+  }
+
+  useEffect(() => {
+    if (screen === 'game') {
+      loadQuestion(currentQ)
+    }
+  }, [screen, currentQ])
+
+  function handleCheck() {
+    if (answered || !question) return
+    const val = inputRef.current?.value || ''
+    if (!val.trim()) return
+    const ok = isCorrectAnswer(val, question.answer)
+    setAnswered(true)
+    setAnswerState(ok ? 'correct' : 'wrong')
+    if (ok) {
+      setCorrect(c => c + 1)
+      const pts = DIFFICULTIES.find(d => d.id === difficulty)?.points || 10
+      setPoints(p => p + pts)
+    } else {
+      setWrong(w => w + 1)
+    }
+  }
+
+  function handleNext() {
+    if (currentQ + 1 >= TOTAL) {
+      setScreen('result')
+    } else {
+      setCurrentQ(q => q + 1)
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter') {
+      if (!answered) handleCheck()
+      else handleNext()
+    }
+  }
+
+  const progress = Math.round(((answered ? currentQ + 1 : currentQ) / TOTAL) * 100)
+  const pct = Math.round((correct / TOTAL) * 100)
+
+  const resultMsg =
+    pct < 40
+      ? 'Hold ud — du lærer noget nyt hver gang!'
+      : pct < 60
+      ? 'Godt forsøgt! Gennemgå de svar du missede.'
+      : pct < 85
+      ? 'Flot! Du er godt på vej.'
+      : 'Fremragende! Du kender lovgivningen godt.'
+
+  if (screen === 'setup') {
+    return (
+      <div className={styles.page}>
+        <div className={styles.container}>
+          <h1 className={styles.title}>Lovgivning vendespil</h1>
+          <p className={styles.subtitle}>
+            Udfyld det manglende ord — spørgsmål genereres dynamisk af Claude AI
+          </p>
+
+          <div className={styles.section}>
+            <p className={styles.sectionLabel}>Emne</p>
+            <div className={styles.pillRow}>
+              {TOPICS.map(t => (
+                <button
+                  key={t.id}
+                  className={`${styles.pill} ${topic === t.id ? styles.pillActiveTeal : ''}`}
+                  onClick={() => setTopic(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className={styles.section}>
+            <p className={styles.sectionLabel}>Sværhedsgrad</p>
+            <div className={styles.pillRow}>
+              {DIFFICULTIES.map(d => (
+                <button
+                  key={d.id}
+                  className={`${styles.pill} ${difficulty === d.id ? styles.pillActivePurple : ''}`}
+                  onClick={() => setDifficulty(d.id)}
+                >
+                  {d.label} <span className={styles.pts}>+{d.points}pt</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button className={styles.btnPrimary} onClick={startGame}>
+            ▶ Start spil
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (screen === 'result') {
+    return (
+      <div className={styles.page}>
+        <div className={styles.container}>
+          <div className={styles.resultWrap}>
+            <div className={styles.resultScore}>{correct} / {TOTAL}</div>
+            <p className={styles.resultMsg}>{pct}% korrekt — {resultMsg}</p>
+            <p className={styles.resultPoints}>{points} point optjent</p>
+            <div className={styles.btnRow}>
+              <button className={styles.btnPrimary} onClick={() => { setScreen('game'); setCurrentQ(0); setCorrect(0); setWrong(0); setPoints(0) }}>
+                ↺ Spil igen
+              </button>
+              <button className={styles.btnSecondary} onClick={() => setScreen('setup')}>
+                ⚙ Skift indstillinger
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className={styles.page}>
+      <div className={styles.container}>
+        <div className={styles.progressBg}>
+          <div className={styles.progressFill} style={{ width: progress + '%' }} />
+        </div>
+
+        <div className={styles.stats}>
+          <div className={styles.stat}>
+            <div className={styles.statLabel}>Spørgsmål</div>
+            <div className={styles.statVal}>{currentQ + 1}/{TOTAL}</div>
+          </div>
+          <div className={styles.stat}>
+            <div className={styles.statLabel}>✓ Rigtige</div>
+            <div className={`${styles.statVal} ${styles.green}`}>{correct}</div>
+          </div>
+          <div className={styles.stat}>
+            <div className={styles.statLabel}>✗ Forkerte</div>
+            <div className={`${styles.statVal} ${styles.red}`}>{wrong}</div>
+          </div>
+          <div className={styles.stat}>
+            <div className={styles.statLabel}>Point</div>
+            <div className={styles.statVal}>{points}</div>
+          </div>
+        </div>
+
+        {loading && (
+          <div className={styles.loadingState}>
+            <span className={styles.spinner} /> Genererer spørgsmål...
+          </div>
+        )}
+
+        {error && (
+          <div className={styles.errorMsg}>
+            ⚠ {error}
+            <button className={styles.retryBtn} onClick={() => loadQuestion(currentQ)}>Prøv igen</button>
+          </div>
+        )}
+
+        {question && !loading && (
+          <div className={styles.card}>
+            <div className={styles.cardMeta}>
+              <span className={styles.badge}>{question.category}</span>
+              <span className={styles.qNum}>Spørgsmål {currentQ + 1} af {TOTAL}</span>
+            </div>
+
+            <p className={styles.sentence}>
+              {question.sentence.split('_____').map((part, i, arr) => (
+                <span key={i}>
+                  {part}
+                  {i < arr.length - 1 && <span className={styles.blank}>_____</span>}
+                </span>
+              ))}
+            </p>
+
+            <input
+              ref={inputRef}
+              type="text"
+              className={`${styles.answerInput} ${
+                answerState === 'correct' ? styles.inputCorrect :
+                answerState === 'wrong' ? styles.inputWrong : ''
+              }`}
+              placeholder="Skriv dit svar her..."
+              disabled={answered}
+              onKeyDown={handleKeyDown}
+              autoComplete="off"
+            />
+
+            {showHint && (
+              <p className={styles.hint}>💡 {question.hint}</p>
+            )}
+
+            {answered && (
+              <div className={`${styles.feedback} ${answerState === 'correct' ? styles.feedbackCorrect : styles.feedbackWrong}`}>
+                {answerState === 'correct' ? '✓ Korrekt! ' : `✗ Forkert. Svaret er: "${question.answer}". `}
+                {question.explanation}
+              </div>
+            )}
+
+            <div className={styles.btnRow}>
+              {!answered && (
+                <>
+                  <button className={styles.btnPrimary} onClick={handleCheck}>
+                    ✓ Tjek svar
+                  </button>
+                  {!showHint && (
+                    <button className={styles.btnSecondary} onClick={() => setShowHint(true)}>
+                      💡 Hint
+                    </button>
+                  )}
+                </>
+              )}
+              {answered && (
+                <button className={styles.btnPrimary} onClick={handleNext}>
+                  {currentQ + 1 >= TOTAL ? 'Se resultat →' : 'Næste →'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function levenshtein(a, b) {
+  const m = a.length, n = b.length
+  const dp = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  )
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+  return dp[m][n]
+}
+
+export function isCorrectAnswer(userAnswer, correctAnswer) {
+  const u = userAnswer.trim().toLowerCase()
+  const c = correctAnswer.trim().toLowerCase()
+  return u === c || c.includes(u) || u.includes(c) || levenshtein(u, c) <= 2
+}
+
+const API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY
+
+export async function generateQuestion(topic, difficulty, questionNumber, total) {
+  if (!API_KEY) {
+    throw new Error('VITE_ANTHROPIC_API_KEY mangler i .env filen')
+  }
+
+  const diffMap = { let: 'basic', mellem: 'intermediate', svær: 'advanced' }
+  const topicMap = {
+    vagtloven: 'den danske vagtlov (lov om vagtvirksomhed)',
+    grundloven: 'den danske grundlov',
+    straffeloven: 'den danske straffelov',
+    retsplejeloven: 'den danske retsplejelov',
+  }
+  const diffDesc = {
+    let: 'grundlæggende begreber og definitioner',
+    mellem: 'specifikke paragraffer og krav',
+    svær: 'komplekse juridiske nuancer og undtagelser',
+  }
+
+  const prompt = `Du er en ekspert i dansk lovgivning. Generer ét udfyld-det-manglende-ord spørgsmål om ${topicMap[topic]} på sværhedsgrad ${diffMap[difficulty]}.
+
+Returner KUN et JSON objekt (ingen markdown, ingen kodeblok) med disse felter:
+{
+  "sentence": "Sætningen med _____ som markerer det manglende ord",
+  "answer": "det korrekte ord eller korte udtryk",
+  "hint": "et kort hint uden at afsløre svaret",
+  "category": "kort kategori label (maks 3 ord)",
+  "explanation": "kort forklaring på 1-2 sætninger om hvorfor svaret er korrekt"
+}
+
+Regler:
+- Sætningen skal være faktuel og baseret på ${topicMap[topic]}
+- Det manglende ord/udtryk skal være præcist og entydigt
+- Sværhedsgrad ${diffMap[difficulty]}: ${diffDesc[difficulty]}
+- Skriv på dansk
+- Dette er spørgsmål nummer ${questionNumber} af ${total} — vælg et ANDET aspekt end tidligere spørgsmål`
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': API_KEY,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  })
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err?.error?.message || `API fejl: ${response.status}`)
+  }
+
+  const data = await response.json()
+  const text = data.content.map(i => i.text || '').join('')
+  const clean = text.replace(/```json|```/g, '').trim()
+  return JSON.parse(clean)
+}
+
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+)
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2rem 1rem;
+  background: #0f172a;
+}
+
+.container {
+  width: 100%;
+  max-width: 600px;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  color: #f1f5f9;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: #94a3b8;
+  margin: 0 0 2rem;
+}
+
+.section {
+  margin-bottom: 1.5rem;
+}
+
+.sectionLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: #94a3b8;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pillRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  padding: 6px 16px;
+  border-radius: 99px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  font-size: 14px;
+  color: #94a3b8;
+  transition: all 0.15s;
+}
+
+.pill:hover {
+  border-color: #475569;
+  color: #cbd5e1;
+}
+
+.pillActivePurple {
+  background: #2d2866;
+  border-color: #6d64d4;
+  color: #c4c0f7;
+  font-weight: 500;
+}
+
+.pillActiveTeal {
+  background: #0d3d2e;
+  border-color: #2d9e75;
+  color: #6ee7c0;
+  font-weight: 500;
+}
+
+.pts {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-left: 4px;
+}
+
+.btnPrimary {
+  padding: 10px 24px;
+  border-radius: 8px;
+  border: none;
+  background: #534AB7;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.btnPrimary:hover { background: #6459c8; }
+.btnPrimary:active { transform: scale(0.98); }
+
+.btnSecondary {
+  padding: 10px 24px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 15px;
+  font-weight: 500;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.btnSecondary:hover { background: #263348; color: #cbd5e1; }
+.btnSecondary:active { transform: scale(0.98); }
+
+.btnRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.progressBg {
+  height: 4px;
+  background: #1e293b;
+  border-radius: 99px;
+  margin-bottom: 1.5rem;
+}
+
+.progressFill {
+  height: 4px;
+  background: #534AB7;
+  border-radius: 99px;
+  transition: width 0.4s;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 1.5rem;
+}
+
+.stat {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.statLabel {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.statVal {
+  font-size: 20px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.green { color: #4ade80; }
+.red { color: #f87171; }
+
+.loadingState {
+  text-align: center;
+  padding: 3rem;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #334155;
+  border-top-color: #534AB7;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: -3px;
+  margin-right: 8px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.errorMsg {
+  background: #2d1a1a;
+  border: 1px solid #7f1d1d;
+  color: #fca5a5;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.retryBtn {
+  background: #7f1d1d;
+  color: #fca5a5;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 1rem;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  background: #2d2866;
+  color: #c4c0f7;
+  font-weight: 500;
+}
+
+.qNum {
+  font-size: 12px;
+  color: #475569;
+}
+
+.sentence {
+  font-size: 17px;
+  line-height: 1.7;
+  color: #e2e8f0;
+  margin: 0 0 1rem;
+}
+
+.blank {
+  display: inline-block;
+  min-width: 100px;
+  border-bottom: 2px solid #6459c8;
+  color: #a29ff0;
+  font-weight: 500;
+  padding: 0 4px;
+}
+
+.answerInput {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #f1f5f9;
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.answerInput:focus { border-color: #534AB7; }
+.answerInput:disabled { opacity: 0.8; }
+
+.inputCorrect {
+  border-color: #16a34a !important;
+  background: #052e16 !important;
+  color: #86efac !important;
+}
+
+.inputWrong {
+  border-color: #dc2626 !important;
+  background: #2d0a0a !important;
+  color: #fca5a5 !important;
+}
+
+.hint {
+  font-size: 13px;
+  color: #94a3b8;
+  font-style: italic;
+  margin: 0.5rem 0 0;
+}
+
+.feedback {
+  font-size: 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-top: 0.75rem;
+  line-height: 1.6;
+}
+
+.feedbackCorrect {
+  background: #052e16;
+  border: 1px solid #166534;
+  color: #86efac;
+}
+
+.feedbackWrong {
+  background: #2d0a0a;
+  border: 1px solid #7f1d1d;
+  color: #fca5a5;
+}
+
+.resultWrap {
+  text-align: center;
+  padding: 3rem 1rem;
+}
+
+.resultScore {
+  font-size: 56px;
+  font-weight: 700;
+  color: #a29ff0;
+  line-height: 1;
+  margin-bottom: 0.75rem;
+}
+
+.resultMsg {
+  font-size: 16px;
+  color: #94a3b8;
+  margin: 0 0 0.5rem;
+}
+
+.resultPoints {
+  font-size: 14px;
+  color: #64748b;
+  margin: 0 0 2rem;
+}
+
+.resultWrap .btnRow {
+  justify-content: center;
+}
